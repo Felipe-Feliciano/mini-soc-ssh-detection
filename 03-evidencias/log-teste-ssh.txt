@@ -1,0 +1,3 @@
+Oct 21 15:40:01 ubuntu sshd[1001]: Failed password for invalid user teste from 192.168.115.3 port 46001 ssh2
+Oct 21 15:40:05 ubuntu sshd[1002]: Failed password for invalid user teste from 192.168.115.3 port 46002 ssh2
+Oct 21 15:40:09 ubuntu sshd[1003]: Failed password for invalid user teste from 192.168.115.3 port 46003 ssh2

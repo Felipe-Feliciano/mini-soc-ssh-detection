@@ -1,0 +1,2 @@
+=== Mini SOC | Análise de falhas SSH ===
+192.168.115.3: 1 falha(s)
