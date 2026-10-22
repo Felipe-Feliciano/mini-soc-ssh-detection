@@ -1,50 +1,119 @@
-#!/usr/bin/env python3
 
+import csv
 import re
 import sys
-from collections import Counter
+from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 LIMITE_ALERTA = 3
+JANELA_MINUTOS = 5
+
+PADRAO = re.compile(
+    r"(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}).*"
+    r"sshd.*Failed password.*from\s+(\d{1,3}(?:\.\d{1,3}){3})"
+)
 
 
-def analisar_log(caminho):
-    arquivo = Path(caminho)
+def analisar_log(caminho, relatorio=""):
+    eventos = defaultdict(list)
+    ano_atual = datetime.now().year
 
-    if not arquivo.is_file():
-        print(f"Erro: arquivo não encontrado: {arquivo}")
-        sys.exit(1)
+    with open(caminho, "r", encoding="utf-8", errors="replace") as arquivo:
+        for linha in arquivo:
+            resultado = PADRAO.search(linha)
 
-    falhas_por_ip = Counter()
-    padrao = re.compile(
-        r"sshd.*Failed password.*from (\d{1,3}(?:\.\d{1,3}){3})"
-    )
+            if not resultado:
+                continue
 
-    with arquivo.open("r", encoding="utf-8", errors="replace") as log:
-        for linha in log:
-            resultado = padrao.search(linha)
-            if resultado:
-                falhas_por_ip[resultado.group(1)] += 1
+            data_texto, ip = resultado.groups()
 
-    if not falhas_por_ip:
-        print("Nenhuma falha de autenticação SSH encontrada.")
-        return
+            try:
+                data = datetime.strptime(
+                    f"{ano_atual} {data_texto}",
+                    "%Y %b %d %H:%M:%S"
+                )
+            except ValueError:
+                continue
 
-    print("=== Mini SOC | Análise de falhas SSH ===")
+            eventos[ip].append(data)
 
-    for ip, quantidade in falhas_por_ip.most_common():
-        print(f"{ip}: {quantidade} falha(s)")
+    if not eventos:
+        print("Nenhuma falha de autenticacao SSH encontrada.")
+        if relatorio:
+            salvar_csv(relatorio, [])
+        return []
 
-        if quantidade >= LIMITE_ALERTA:
-            print(
-                f"ALERTA: {ip} registrou "
-                f"{quantidade} falhas de autenticação."
-            )
+    alertas = []
+
+    for ip, datas in sorted(eventos.items()):
+        datas.sort()
+        inicio = 0
+        gerou_alerta = False
+
+        for fim, data in enumerate(datas):
+            while data - datas[inicio] > timedelta(
+                minutes=JANELA_MINUTOS
+            ):
+                inicio += 1
+
+            quantidade = fim - inicio + 1
+
+            if quantidade >= LIMITE_ALERTA:
+                print(
+                    f"ALERTA: {ip} registrou {quantidade} falhas "
+                    f"em uma janela de {JANELA_MINUTOS} minutos."
+                )
+
+                alertas.append({
+                    "ip": ip,
+                    "quantidade_falhas": quantidade,
+                    "horario_alerta": data.strftime("%Y-%m-%d %H:%M:%S"),
+                    "severidade": "ALTA",
+                })
+
+                gerou_alerta = True
+                break
+
+        if not gerou_alerta:
+            print(f"{ip}: {len(datas)} falha(s) no total.")
+
+    if relatorio:
+        salvar_csv(relatorio, alertas)
+
+    return alertas
+
+
+def salvar_csv(caminho, alertas):
+    campos = [
+        "ip",
+        "quantidade_falhas",
+        "horario_alerta",
+        "severidade",
+    ]
+
+    with open(caminho, "w", newline="", encoding="utf-8") as arquivo:
+        escritor = csv.DictWriter(arquivo, fieldnames=campos)
+        escritor.writeheader()
+        escritor.writerows(alertas)
+
+    print(f"Relatorio CSV salvo em: {caminho}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(f"Uso: python3 {sys.argv[0]} CAMINHO_DO_LOG")
+    if len(sys.argv) not in (2, 3):
+        print(
+            f"Uso: python3 {Path(sys.argv[0]).name} "
+            "<arquivo_de_log> [relatorio.csv]"
+        )
         sys.exit(1)
 
-    analisar_log(sys.argv[1])
+    try:
+        caminho_log = sys.argv[1]
+        caminho_csv = sys.argv[2] if len(sys.argv) == 3 else ""
+
+        analisar_log(caminho_log, caminho_csv)
+
+    except OSError as erro:
+        print(f"Erro ao ler ou salvar arquivo: {erro}")
+        sys.exit(1)
